@@ -1,30 +1,43 @@
-# OVE TRI METODE ĆE BITI POZIVANE KROZ AUTOMATSKE TESTOVE. NEMOJTE MENJATI NAZIV, PARAMETRE I POVRATNU VREDNOST.
-# Dozvoljeno je implementirati dodatne, pomoćne metode, ali isključivo u okviru ovog modula.
-
-from functools import total_ordering
-
 from tokenizer import tokenize
+
+from enum import Enum
 
 
 class UnmatchingParentheses(Exception):
     pass
 
 
-""" @total_ordering
-class Priority:
-    def __init__(self, operator,  value, associativity):
-        self.operator = operator
-        self.value = value
-        self.associativity = associativity
+class FormatError(Exception):
+    def __init__(self) -> None:
+        super().__init__("Neispravan format izraza")
 
-    def  __lt__(self, other):
-        if not isinstance(other, Priority):
-            raise TypeError("Cannot compare instances of 'Priority' and '{0}'".format(type(other).__name__))
-        return (self.value < other.value)
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Priority):
-            raise TypeError("Cannot compare instances of 'Priority' and '{0}'".format(type(other).__name__))
-        return self.value == other.value """
+
+class State(Enum):
+    BIN_OP = 1
+    OPERAND = 2
+    UN_OP = 3
+
+
+class Stack:
+
+    def __init__(self) -> None:
+        self._stack = []
+
+    def push(self, item):
+        self._stack.insert(len(self._stack), item)
+
+    def top(self):
+        if not self._stack:
+            return None
+        return self._stack[len(self._stack) - 1]
+
+    def pop(self):
+        ret_val = self.top()
+        self._stack = self._stack[:-1]
+        return ret_val
+
+    def __bool__(self):
+        return bool(self._stack)
 
 
 operators = {
@@ -32,19 +45,14 @@ operators = {
     ")": (0, None, None),
     "+": (1, "left", 2),
     "-": (1, "left", 2),
-    "_": (1, "left", 1),
     "*": (2, "left", 2),
     "/": (2, "left", 2),
-    "^": (3, "right", 2),
+    "_": (3, "left", 1),
+    "^": (4, "right", 2),
 }
 
 
-def numify(l):
-    return [float(item) for item in l]
-
-
 def apply(operator, *args):
-    args = numify(args)
 
     if operator == "+":
         return args[0] + args[1]
@@ -75,51 +83,62 @@ def infix_to_postfix(expression):
     Primer:
         ulaz '6.11 – 74 * 2' se pretvara u izlaz [6.11, 74, 2, '*', '-']
     """
-    stack = []
+    if not isinstance(expression, str):
+        raise TypeError("Izraz mora biti string")
+
+    stack = Stack()
     result = []
-    unary_flag = True
+    state = State.UN_OP
     infix = tokenize(expression)
     for item in infix:
         try:
             operator = operators[item]
         except KeyError:
-            result.append(item)
+            if state == State.BIN_OP:
+                raise FormatError()
+            result.append(float(item))
+            state = State.BIN_OP
             continue
 
         if item == "(":
-            stack.append(item)
-            unary_flag = True
-            continue
-        elif item == ")":
+            stack.push(item)
+            state = State.UN_OP
+        elif item == ")" and state == State.BIN_OP:
             while True:
                 try:
-                    top = stack[-1]
+                    top = stack.top()
                 except IndexError:
-                    raise ValueError("Nedovoljan broj otvorenih zagrada")
+                    raise UnmatchingParentheses("Nedovoljan broj otvorenih zagrada")
                 if top == "(":
                     stack.pop()
                     break
                 else:
                     stack.pop()
                     result.append(top)
-        elif unary_flag and item == "-":
-            unary_flag = False
-            stack.append("_")
 
-        else:
+        elif item == "-" and state == State.UN_OP:
+            stack.push("_")
+            state = State.OPERAND
+        elif item == "+" and state == State.UN_OP:
+            state = State.OPERAND
+
+        elif state == State.BIN_OP:
             while stack and (
-                (operators[stack[-1]][0] > operator[0])
-                or (operators[stack[-1]][0] == operator[0] and operator[1] == "left")
+                (operators[stack.top()][0] > operator[0])
+                or (operators[stack.top()][0] == operator[0] and operator[1] == "left")
             ):
 
                 result.append(stack.pop())
-            stack.append(item)
+            stack.push(item)
+            state = State.OPERAND
+        else:
+            raise FormatError()
 
     while stack:
         result.append(stack.pop())
 
     if "(" in result:
-        raise UnmatchingParentheses
+        raise UnmatchingParentheses("Nezatvorene zagrede")
     return result
 
 
@@ -137,19 +156,23 @@ def calculate_postfix(token_list):
     Primer:
         Ulaz [6.11, 74, 2, '*', '-'] se pretvara u izlaz -141.89
     """
-    stack = []
+
+    if not isinstance(token_list, list):
+        raise TypeError("Token list mora biti lista")
+
+    stack = Stack()
 
     for item in token_list:
         try:
             operator = operators[item]
         except KeyError:
-            stack.append(item)
+            stack.push(item)
             continue
 
         operands = []
         for i in range(operator[2]):
             operands.append(stack.pop())
-        stack.append(apply(item, *operands))
+        stack.push(apply(item, *operands))
 
     return stack.pop()
 
@@ -171,9 +194,3 @@ def calculate_infix(expression):
         Ulaz '6.11 – 74 * 2' se pretvara u izlaz -141.89
     """
     return calculate_postfix(infix_to_postfix(expression))
-
-
-exp = "(-6.11 - (-74)) * 2 ^ 2 ^ 3 - 2 ^ ((1 / 2)"
-
-print(infix_to_postfix(exp))
-print(calculate_infix(exp))
